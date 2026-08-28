@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Job Trends — Adzuna</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1 13 6 6l3 4 5-8' fill='none' stroke='%232a78d6' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Job market trends</h1>
+      <p class="sub">Live vacancy data from the Adzuna API — with a focus on how often job ads ask for AI.</p>
+      <div id="banner" class="banner hidden"></div>
+    </header>
+
+    <div class="filters" id="filters">
+      <label>Country
+        <select id="country-select"></select>
+      </label>
+      <label>Profession (salary &amp; employers)
+        <select id="category-select"></select>
+      </label>
+      <span class="chip">AI detection query: <code id="ai-query"></code></span>
+    </div>
+
+    <div class="kpis" id="kpis"></div>
+
+    <div class="grid">
+      <section class="card" data-panel="ai-count">
+        <div class="card-head">
+          <h2>AI-mentioning vacancies over time</h2>
+          <div class="view-toggle" role="group" aria-label="View">
+            <button data-view="chart" aria-pressed="true">Chart</button>
+            <button data-view="table" aria-pressed="false">Table</button>
+          </div>
+        </div>
+        <div class="body"></div>
+      </section>
+
+      <section class="card" data-panel="ai-share">
+        <div class="card-head">
+          <h2>AI share of all vacancies</h2>
+          <div class="view-toggle" role="group" aria-label="View">
+            <button data-view="chart" aria-pressed="true">Chart</button>
+            <button data-view="table" aria-pressed="false">Table</button>
+          </div>
+        </div>
+        <div class="body"></div>
+      </section>
+
+      <section class="card wide" data-panel="by-profession">
+        <div class="card-head">
+          <h2>Which professions ask for AI most</h2>
+          <span class="note">share of each category's live ads that mention AI</span>
+          <div class="view-toggle" role="group" aria-label="View">
+            <button data-view="chart" aria-pressed="true">Chart</button>
+            <button data-view="table" aria-pressed="false">Table</button>
+          </div>
+        </div>
+        <div class="body"></div>
+      </section>
+
+      <section class="card" data-panel="salary">
+        <div class="card-head">
+          <h2 id="salary-title">Average advertised salary</h2>
+          <div class="view-toggle" role="group" aria-label="View">
+            <button data-view="chart" aria-pressed="true">Chart</button>
+            <button data-view="table" aria-pressed="false">Table</button>
+          </div>
+        </div>
+        <div class="body"></div>
+      </section>
+
+      <section class="card" data-panel="companies">
+        <div class="card-head">
+          <h2 id="companies-title">Top employers advertising AI roles</h2>
+        </div>
+        <div class="body"></div>
+      </section>
+    </div>
+
+    <footer>
+      Vacancy counts, categories, salary history and employer leaderboards come from the
+      <a href="https://developer.adzuna.com/" rel="noopener">Adzuna API</a>.
+      Adzuna does not publish historical keyword counts, so the AI-over-time trend is built from
+      snapshots this app records each day it runs (demo mode shows a synthetic example of that trend).
+    </footer>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
