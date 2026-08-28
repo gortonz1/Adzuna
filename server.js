@@ -8,10 +8,11 @@
 // not keyword-count history.
 
 import http from 'node:http';
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AdzunaClient } from './lib/adzuna.js';
+import { createStore } from './lib/store.js';
 import * as demo from './lib/demo.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -32,6 +33,8 @@ const client = LIVE
     })
   : null;
 
+const store = createStore({ dataDir: DATA_DIR });
+
 // country -> { status: 'loading'|'ready'|'error', done, total, data, error }
 const overviewJobs = new Map();
 
@@ -43,31 +46,14 @@ function loadDotEnv(file) {
   }
 }
 
-function snapshotFile(country) {
-  return path.join(DATA_DIR, `snapshots-${country}.json`);
-}
-
-function readSnapshots(country) {
-  try {
-    return JSON.parse(readFileSync(snapshotFile(country), 'utf8'));
-  } catch {
-    return [];
-  }
-}
-
-function appendSnapshot(country, overview) {
-  const today = new Date().toISOString().slice(0, 10);
-  const snapshots = readSnapshots(country);
-  if (snapshots.some((s) => s.date === today)) return;
-  snapshots.push({
-    date: today,
+async function appendSnapshot(country, overview) {
+  await store.append(country, {
+    date: new Date().toISOString().slice(0, 10),
     total: overview.total,
     ai: overview.ai,
     share: overview.share,
     categories: Object.fromEntries(overview.categories.map((c) => [c.tag, { total: c.total, ai: c.ai }])),
   });
-  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-  writeFileSync(snapshotFile(country), JSON.stringify(snapshots, null, 2));
 }
 
 // Full market scan: total + AI counts overall and per category. Roughly
@@ -98,7 +84,7 @@ async function buildLiveOverview(country) {
       categories,
     };
     job.status = 'ready';
-    appendSnapshot(country, job.data);
+    await appendSnapshot(country, job.data);
   } catch (err) {
     job.status = 'error';
     job.error = err.message;
@@ -134,7 +120,10 @@ async function handleApi(url) {
 
     case '/api/snapshots':
       if (!LIVE) return { demo: true, snapshots: demo.demoSnapshots(country) };
-      return { snapshots: readSnapshots(country) };
+      return { snapshots: await store.list(country) };
+
+    case '/api/health':
+      return { ok: true, live: LIVE, store: store.kind };
 
     case '/api/history': {
       const category = url.searchParams.get('category') || 'it-jobs';
@@ -194,7 +183,35 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Job trends dashboard: http://localhost:${PORT}`);
+  console.log(`Snapshot store: ${store.kind}`);
   console.log(LIVE
     ? `Live mode — AI query: "${AI_QUERY}". First overview per country takes a few minutes (rate-limited).`
     : 'Demo mode — set ADZUNA_APP_ID and ADZUNA_APP_KEY in .env for live data.');
 });
+
+// Daily snapshot collector: in live mode, make sure each tracked country gets
+// one snapshot per day (buildLiveOverview appends it on completion). Checked
+// hourly so a restart or a failed run just retries later in the day.
+const SNAPSHOT_COUNTRIES = (process.env.SNAPSHOT_COUNTRIES || 'gb')
+  .split(',').map((c) => c.trim().toLowerCase()).filter((c) => VALID_COUNTRIES.has(c));
+
+async function collectDailySnapshots() {
+  const today = new Date().toISOString().slice(0, 10);
+  for (const country of SNAPSHOT_COUNTRIES) {
+    try {
+      const job = overviewJobs.get(country);
+      if (job && job.status === 'loading') continue;
+      const snapshots = await store.list(country);
+      if (snapshots.some((s) => s.date === today)) continue;
+      console.log(`collecting daily snapshot for ${country}…`);
+      await buildLiveOverview(country);
+    } catch (err) {
+      console.error(`snapshot collection failed for ${country}:`, err.message);
+    }
+  }
+}
+
+if (LIVE) {
+  collectDailySnapshots();
+  setInterval(collectDailySnapshots, 60 * 60 * 1000);
+}

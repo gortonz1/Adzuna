@@ -60,6 +60,30 @@ looks like.
 `ADZUNA_AI_QUERY` in `.env` — e.g. set it to `machine learning` to require both words, or
 adjust the code to use Adzuna's `what_phrase`/`what_or` parameters for other definitions).
 
+## Deployment (Railway + Supabase)
+
+The app is deployable anywhere Node runs. The hosted setup uses:
+
+- **Railway** — runs the server continuously. An in-app collector checks hourly and
+  records one snapshot per tracked country per day (`SNAPSHOT_COUNTRIES`, default `gb`).
+- **Supabase** — durable snapshot storage in Postgres (`adzuna_snapshots` table), so
+  history survives redeploys. Reads are public selects; writes go through the
+  `record_adzuna_snapshot` security-definer RPC, which validates `SNAPSHOT_SECRET`
+  server-side (the anon key alone cannot write).
+
+Environment variables:
+
+| Variable | Purpose |
+|---|---|
+| `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` | Adzuna credentials — without them the app serves demo data and collects nothing |
+| `SUPABASE_URL` / `SUPABASE_ANON_KEY` | Supabase project URL and publishable key |
+| `SNAPSHOT_SECRET` | must match the write secret stored in `adzuna_private.config` |
+| `SNAPSHOT_COUNTRIES` | comma-separated country codes to snapshot daily (default `gb`) |
+| `ADZUNA_AI_QUERY` | keyword(s) defining an "AI" job (default `AI`) |
+
+Without the Supabase variables the app falls back to file storage in `data/`
+(fine locally; ephemeral on most hosts).
+
 ## Endpoints used
 
 | Adzuna endpoint | Used for |
