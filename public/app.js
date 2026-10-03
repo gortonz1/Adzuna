@@ -192,25 +192,38 @@ function setRefetching(on) {
   for (const p of Object.values(panels)) p.body.classList.toggle('refetching', on);
 }
 
-async function loadOverview() {
-  // Live mode builds the overview in the background; poll until it's ready.
+function scanBanner(res, refreshing) {
+  const span = el('span', '');
+  span.appendChild(el('strong', refreshing ? 'Refreshing today’s counts… ' : 'Scanning the market… '));
+  span.appendChild(document.createTextNode(refreshing
+    ? `showing figures from ${res.data.generatedAt.slice(0, 10)} until the new scan finishes (${res.done}/${res.total} requests, rate-limited).`
+    : `fetching live counts from Adzuna (${res.done}/${res.total} requests, rate-limited). This first run takes a few minutes; results are cached for 24h.`));
+  const track = el('div', undefined, 'progress-track');
+  const fill = el('div', undefined, 'progress-fill');
+  fill.style.width = `${Math.round((res.done / Math.max(1, res.total)) * 100)}%`;
+  track.appendChild(fill);
+  return [span, track];
+}
+
+// Live mode builds the overview in the background. Poll until it's ready,
+// handing over any earlier data (onData) as soon as the server has some so the
+// page isn't blank during a refresh. Resolves with the final overview.
+async function pollOverview(isCurrent, onData) {
+  let shown = null;
   for (;;) {
     const res = await api('/api/overview');
+    if (!isCurrent()) return null;
+    if (res.status === 'error') throw new Error(res.error || 'overview failed');
     if (res.status === 'ready') {
       setBanner(state.meta.demo ? demoBannerNodes() : null);
       return res.data;
     }
-    if (res.status === 'error') throw new Error(res.error || 'overview failed');
-    const frag = [el('span', '')];
-    const strong = el('strong', 'Scanning the market… ');
-    frag[0].appendChild(strong);
-    frag[0].appendChild(document.createTextNode(
-      `fetching live counts from Adzuna (${res.done}/${res.total} requests, rate-limited). This first run takes a few minutes; results are cached for 24h.`));
-    const track = el('div', undefined, 'progress-track');
-    const fill = el('div', undefined, 'progress-fill');
-    fill.style.width = `${Math.round((res.done / Math.max(1, res.total)) * 100)}%`;
-    track.appendChild(fill);
-    setBanner([frag[0], track]);
+    if (res.data && res.data.generatedAt !== shown) {
+      shown = res.data.generatedAt;
+      await onData(res.data);
+      if (!isCurrent()) return null;
+    }
+    setBanner(scanBanner(res, Boolean(res.data)));
     await new Promise((r) => setTimeout(r, 3000));
   }
 }
@@ -238,19 +251,48 @@ function populateCategories() {
   state.category = catSel.value;
 }
 
+let loadSeq = 0;
+
 async function loadCountryData() {
+  const seq = ++loadSeq;
+  const isCurrent = () => seq === loadSeq;
   setRefetching(true);
   try {
-    const [overview, snaps] = await Promise.all([loadOverview(), api('/api/snapshots')]);
-    state.overview = overview;
+    // Stored history doesn't depend on the market scan, so show it first.
+    const snaps = await api('/api/snapshots');
+    if (!isCurrent()) return;
     state.snapshots = snaps.snapshots || [];
-    populateCategories();
-    await loadCategoryData(false);
-    renderAll();
+    renderAiCount();
+    renderAiShare();
+    panels['ai-count'].body.classList.remove('refetching');
+    panels['ai-share'].body.classList.remove('refetching');
+
+    // Salary/employer calls share Adzuna's rate-limited queue with the scan, so
+    // render the overview panels first and let those two fill in when they can.
+    const applyOverview = (overview) => {
+      state.overview = overview;
+      populateCategories();
+      renderKpis();
+      renderAiCount();
+      renderAiShare();
+      renderByProfession();
+      panels['by-profession'].body.classList.remove('refetching');
+      return loadCategoryData();
+    };
+    const overview = await pollOverview(isCurrent, (stale) => {
+      applyOverview(stale).catch(() => {});
+    });
+    if (!isCurrent()) return;
+    // A finished scan appends today's snapshot, so pick that up too.
+    const fresh = await api('/api/snapshots');
+    if (!isCurrent()) return;
+    state.snapshots = fresh.snapshots || [];
+    await applyOverview(overview);
+    if (isCurrent()) renderAll();
   } catch (err) {
-    setBanner([el('span', `Something went wrong: ${err.message}`)]);
+    if (isCurrent()) setBanner([el('span', `Something went wrong: ${err.message}`)]);
   } finally {
-    setRefetching(false);
+    if (isCurrent()) setRefetching(false);
   }
 }
 

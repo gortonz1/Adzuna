@@ -52,18 +52,56 @@ async function appendSnapshot(country, overview) {
     total: overview.total,
     ai: overview.ai,
     share: overview.share,
-    categories: Object.fromEntries(overview.categories.map((c) => [c.tag, { total: c.total, ai: c.ai }])),
+    categories: Object.fromEntries(overview.categories.map((c) => [c.tag, { label: c.label, total: c.total, ai: c.ai }])),
   });
 }
 
 // Full market scan: total + AI counts overall and per category. Roughly
 // 2 * categories + 3 API calls, which the client spaces out under the rate
 // limit, so a cold run takes a couple of minutes. Results cache for 24h.
+// Rebuild an overview from the latest stored snapshot, so the dashboard has
+// something to show after a restart while the first scan is still running.
+async function overviewFromStore(country) {
+  const latest = (await store.list(country)).at(-1);
+  if (!latest?.categories) return null;
+  const categories = Object.entries(latest.categories)
+    .filter(([, c]) => c.total > 0)
+    .map(([tag, c]) => ({
+      tag,
+      // Older snapshots didn't store labels; derive one from the tag.
+      label: c.label || tag.replace(/-/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase()).replace(/\bIt\b/, 'IT'),
+      total: c.total,
+      ai: c.ai,
+      share: c.ai / c.total,
+    }));
+  return {
+    country,
+    generatedAt: `${latest.date}T00:00:00.000Z`,
+    total: latest.total,
+    ai: latest.ai,
+    share: latest.share,
+    categories,
+  };
+}
+
 async function buildLiveOverview(country) {
-  const job = { status: 'loading', done: 0, total: 1, data: null, error: null };
+  // Keep serving the previous results while the refresh runs (stale-while-revalidate).
+  const prev = overviewJobs.get(country)?.data ?? null;
+  const job = { status: 'loading', done: 0, total: 1, data: prev, error: null };
   overviewJobs.set(country, job);
   try {
+    if (!job.data) {
+      job.data = await overviewFromStore(country).catch((err) => {
+        console.warn(`overview(${country}): no stored snapshot to fall back on:`, err.message);
+        return null;
+      });
+    }
     const cats = await client.categories(country);
+    if (job.data) {
+      // Fix up labels guessed from tags in the stored-snapshot fallback.
+      const labels = new Map(cats.map((c) => [c.tag, c.label]));
+      job.data = { ...job.data, categories: job.data.categories.map((c) => ({ ...c, label: labels.get(c.tag) || c.label })) };
+    }
     job.total = cats.length * 2 + 2;
     const tick = () => { job.done += 1; };
 
@@ -86,7 +124,8 @@ async function buildLiveOverview(country) {
     job.status = 'ready';
     await appendSnapshot(country, job.data);
   } catch (err) {
-    job.status = 'error';
+    // With earlier data to show, keep serving it and let the hourly collector retry.
+    job.status = job.data ? 'ready' : 'error';
     job.error = err.message;
     console.error(`overview(${country}) failed:`, err.message);
   }
