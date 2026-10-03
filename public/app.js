@@ -32,10 +32,24 @@ for (const card of document.querySelectorAll('.card')) {
 
 const fmtSalary = (n) => `${CURRENCY[state.country] || ''}${fmtCompact(n)}`;
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 function monthLabel(iso) {
   const [y, m] = iso.split('-').map(Number);
-  const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${names[m - 1]} ${String(y).slice(2)}`;
+  return `${MONTHS[m - 1]} ${String(y).slice(2)}`;
+}
+
+function dayLabel(iso) {
+  const [, m, d] = iso.split('-').map(Number);
+  return `${d} ${MONTHS[m - 1]}`;
+}
+
+// Live snapshots are daily, demo ones monthly. A month-only label on daily data
+// repeats ("Sep 26" x4) and reads like a day, so show the day for short spans.
+function snapshotLabeler(snapshots) {
+  if (snapshots.length < 2) return dayLabel;
+  const spanDays = (Date.parse(snapshots.at(-1).date) - Date.parse(snapshots[0].date)) / 86400000;
+  return spanDays <= 120 ? dayLabel : monthLabel;
 }
 
 // Daily snapshots can pile up; show at most ~40 points, thinning evenly.
@@ -107,7 +121,8 @@ function renderKpis() {
 
 function renderAiCount() {
   const p = panels['ai-count'];
-  const points = thin(state.snapshots).map((s) => ({ label: monthLabel(s.date), value: s.ai }));
+  const label = snapshotLabeler(state.snapshots);
+  const points = thin(state.snapshots).map((s) => ({ label: label(s.date), value: s.ai }));
   p.render = () => p.view === 'chart'
     ? lineChart(p.body, { points, name: 'AI-mentioning vacancies', yFormat: fmtCompact })
     : dataTable(p.body, ['Date', 'AI-mentioning vacancies'], state.snapshots.map((s) => [s.date, fmtInt(s.ai)]), [1]);
@@ -116,7 +131,8 @@ function renderAiCount() {
 
 function renderAiShare() {
   const p = panels['ai-share'];
-  const points = thin(state.snapshots).map((s) => ({ label: monthLabel(s.date), value: s.share }));
+  const label = snapshotLabeler(state.snapshots);
+  const points = thin(state.snapshots).map((s) => ({ label: label(s.date), value: s.share }));
   p.render = () => p.view === 'chart'
     ? lineChart(p.body, { points, name: 'AI share of all vacancies', yFormat: fmtPct })
     : dataTable(p.body, ['Date', 'AI share'], state.snapshots.map((s) => [s.date, fmtPct(s.share)]), [1]);
